@@ -1,0 +1,61 @@
+name: Terraform Apply
+
+on:
+  workflow_call:
+    inputs:
+      terraform_root:
+        description: Folder containing all terraform resources, used to shorten terraform directory names
+        required: false
+        default: "."
+        type: string
+      directories:
+        description: List of directories containing terraform configurations relative to terraform_root. Must be a string, not a list. Example "['dev', 'prod']"
+        required: true
+        type: string
+
+    secrets:
+      aws-access-key-id:
+        description: AWS Access Key for the IAM user performing Terraform updates
+        required: true
+      aws-secret-access-key:
+        description: AWS Secret Access Key for the IAM user performing Terraform updates
+        required: true
+    
+jobs:
+  plan:
+    name: Apply
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory:
+          ${{ fromJSON(inputs.directories) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          aws-region: us-east-1
+
+      - name: Format
+        id: fmt
+        run: terraform fmt -check
+        working-directory: ${{ inputs.terraform_root }}/${{ matrix.directory }}
+
+      - name: Init
+        id: init
+        run: terraform -chdir=${{ inputs.terraform_root }}/${{ matrix.directory }} init
+
+      - name: Validate
+        id: validate
+        run: terraform -chdir=${{ inputs.terraform_root }}/${{ matrix.directory }} validate -no-color
+
+      - name: Apply
+        id: apply
+        run: terraform -chdir=${{ inputs.terraform_root }}/${{ matrix.directory }} apply -auto-approve

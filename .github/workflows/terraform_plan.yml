@@ -1,0 +1,147 @@
+name: Terraform Plan
+
+on:
+  workflow_call:
+    inputs:
+      terraform_root:
+        description: Folder containing all terraform resources, used to shorten terraform directory names
+        required: false
+        default: "."
+        type: string
+      directories:
+        description: List of directories containing terraform configurations relative to terraform_root. Must be a string. Example "['dev', 'prod']"
+        required: true
+        type: string
+
+    secrets:
+      aws-access-key-id:
+        description: AWS Access Key for the IAM user performing Terraform updates
+        required: true
+      aws-secret-access-key:
+        description: AWS Secret Access Key for the IAM user performing Terraform updates
+        required: true
+    
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory:
+          ${{ fromJSON(inputs.directories) }}
+    outputs:
+      plan: ${{ steps.plan.outputs.stdout || steps.plan.outputs.stderr}}
+      outcome: ${{ steps.plan.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Name
+        id: name
+        run: |
+          dir=${{ matrix.directory }}
+          echo "Directory: $dir"
+
+          name=$(echo $dir | tr / _)
+          echo "Name: $name"
+
+          echo "::set-output name=name::$name"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          aws-region: us-east-1
+          mask-aws-account-id: 'no' # https://github.community/t/skip-output-aws-account-id-since-it-may-contain-secret/123791/8
+
+      - name: Format
+        id: fmt
+        run: terraform fmt -check
+        working-directory: ${{ inputs.terraform_root }}/${{ matrix.directory }}
+
+      - name: Init
+        id: init
+        run: terraform -chdir=${{ inputs.terraform_root }}/${{ matrix.directory }} init
+
+      - name: Validate
+        id: validate
+        run: terraform -chdir=${{ inputs.terraform_root }}/${{ matrix.directory }} validate -no-color
+
+      - name: Plan
+        id: plan
+        continue-on-error: true
+        run: |
+          set -o pipefail # still fail if plan step fails and tee succeeds
+          terraform -chdir=${{ inputs.terraform_root }}/${{ matrix.directory }} plan -no-color 2>&1 | tee plan.txt # copy stdout and stderr to text file
+
+      - name: Save Plan Outcome
+        id: save
+        run: echo -n "${{ steps.plan.outcome }}" >> outcome.txt
+
+      - name: Upload
+        id: upload
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: |
+            plan.txt
+            outcome.txt
+          retention-days: 1
+
+      - name: Plan Status # continue after plan failure to upload artifact, but still mark the job as a failure here
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  update:
+    name: Update PR
+    if: always() # still show failed plan results
+    runs-on: ubuntu-latest
+    needs: plan
+    steps:
+      - name: Download Plans
+        uses: actions/download-artifact@v2
+        with:
+          path: plans
+
+      - name: Update Pull Request
+        uses: actions/github-script@v5.1.0
+        with:
+          script: |
+            const fs = require('fs')
+
+            function textForEnv(name, outcome, plan) {
+              emoji = (outcome === "success") ? '✅' : '❌'
+              return `<details><summary>${name} - ${outcome} ${emoji}</summary>
+
+            \`\`\`
+            ${plan}
+            \`\`\`
+
+            </details>`
+            }
+
+            const patterns = ["plans/*", "!plans/*/*.txt"]
+            const globber = await glob.create(patterns.join('\n'))
+            output = "### Terraform Plans\n"
+
+            for await (const artifact of globber.globGenerator()) {
+              console.log(artifact)
+              name = artifact.split('/').pop()
+              console.log(name)
+
+              plan = fs.readFileSync(artifact + "/plan.txt", 'utf8')
+              outcome = fs.readFileSync(artifact + "/outcome.txt", 'utf8')
+              output += textForEnv(name, outcome, plan)
+              output += '\n\n'
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })

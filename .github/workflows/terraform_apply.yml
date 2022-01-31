@@ -10,7 +10,8 @@ on:
         type: string
       directories:
         description: List of directories containing terraform configurations relative to terraform_root. Must be a string, not a list. Example "['dev', 'prod']"
-        required: true
+        required: false
+        default: "['.']"
         type: string
 
     secrets:

@@ -10,7 +10,8 @@ on:
         type: string
       directories:
         description: List of directories containing terraform configurations relative to terraform_root. Must be a string. Example "['dev', 'prod']"
-        required: true
+        required: false
+        default: "['.']"
         type: string
 
     secrets:
@@ -42,7 +43,12 @@ jobs:
           dir=${{ matrix.directory }}
           echo "Directory: $dir"
 
-          name=$(echo $dir | tr / _)
+          if [ "$dir" == "." ] 
+          then
+            name="root"
+          else
+            name=$(echo $dir | tr / _)
+          fi
           echo "Name: $name"
 
           echo "::set-output name=name::$name"

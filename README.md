@@ -1,10 +1,12 @@
 # Reusable Github Actions Workflows
 
-:warning: **This repository must be public!** Don't add anything secret here!  
+> :warning: **This repository must be public!**  Don't add anything secret here!  
 
 This repo provides reusable Github Actions workflows for common tasks. Use these to save time!
 
 
+## Available Workflows
+Check the [docs](/docs) folder for more information about available workflows.
 
 ## Calling a Reusable Workflow
 Call a reusable workflow like this. Be sure to specify a version to guarantee consistent builds. 
